@@ -74,6 +74,86 @@ class StatusPoller(QThread):
             time.sleep(self._interval)
 
 
+class MoveWorker(QThread):
+    arrived = pyqtSignal(float)   # emits actual position on arrival
+    timed_out = pyqtSignal(float)
+    log_msg = pyqtSignal(str)
+
+    TORQUE_HOLD        = 410   # 10% once at position
+    TORQUE_STALL       = 0     # 0%  on stall/timeout — cut drive to protect motor
+    TOL_DEG            = 3.0
+    TIMEOUT_S          = 5.0
+    OVERTORQUE_THRESH  = 0.50  # >50% live PWM duty triggers protection
+    OVERTORQUE_SECS    = 10.0  # sustained for this long → cut power
+
+    def __init__(self, servo: MD245MW, target_deg: float, speed: Optional[int] = None,
+                 torque_move: int = 2048, speed_restore: Optional[int] = None):
+        super().__init__()
+        self._servo = servo
+        self._target = target_deg
+        self._speed = speed
+        self._torque_move = torque_move
+        self._speed_restore = speed_restore  # restore after move (e.g. after fast open)
+
+    def run(self):
+        s = self._servo
+        try:
+            if self._speed is not None:
+                s.set_speed(self._speed)
+            s.set_torque_max(self._torque_move)
+            s.set_position(self._target)
+            self.log_msg.emit(
+                f"moving to {self._target:.1f}°  speed={self._speed}  torque→{self._torque_move} ({self._torque_move/4095*100:.0f}%)"
+            )
+            deadline = time.time() + self.TIMEOUT_S
+            overtorque_since = None
+            while time.time() < deadline:
+                pos = s.get_position()
+                if pos is not None and abs(pos - self._target) <= self.TOL_DEG:
+                    time.sleep(0.15)
+                    s.set_torque_max(self.TORQUE_HOLD)
+                    if self._speed_restore is not None:
+                        s.set_speed(self._speed_restore)
+                    self.log_msg.emit(
+                        f"arrived {pos:.1f}°  torque→{self.TORQUE_HOLD} (10%)"
+                    )
+                    self.arrived.emit(pos)
+                    return
+
+                # Over-torque watchdog: live PWM duty > 50% for > 10s → cut power
+                pwm_raw = s._read_register(0x10)
+                if pwm_raw is not None:
+                    pwm = pwm_raw - 65536 if pwm_raw > 32767 else pwm_raw
+                    if abs(pwm) > self.OVERTORQUE_THRESH * 4095:
+                        if overtorque_since is None:
+                            overtorque_since = time.time()
+                        elif time.time() - overtorque_since >= self.OVERTORQUE_SECS:
+                            pos = s.get_position() or 0.0
+                            s.set_torque_max(self.TORQUE_STALL)
+                            if self._speed_restore is not None:
+                                s.set_speed(self._speed_restore)
+                            self.log_msg.emit(
+                                f"OVER-TORQUE protection at {pos:.1f}°  "
+                                f"pwm={abs(pwm)/4095*100:.0f}% >10s  torque→0"
+                            )
+                            self.timed_out.emit(pos)
+                            return
+                    else:
+                        overtorque_since = None
+
+                time.sleep(0.2)
+            pos = s.get_position() or 0.0
+            s.set_torque_max(self.TORQUE_STALL)
+            if self._speed_restore is not None:
+                s.set_speed(self._speed_restore)
+            self.log_msg.emit(
+                f"STALL timeout at {pos:.1f}°  torque→0 (motor cut)"
+            )
+            self.timed_out.emit(pos)
+        except Exception as e:
+            self.log_msg.emit(f"move error: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -119,6 +199,7 @@ class MainWindow(QMainWindow):
 
         self._servo: Optional[MD245MW] = None
         self._poller: Optional[StatusPoller] = None
+        self._mover: Optional[MoveWorker] = None
         self._status_labels: dict[str, QLabel] = {}
         self._config = load_config()
 
@@ -251,6 +332,27 @@ class MainWindow(QMainWindow):
         spd_row.addWidget(self.btn_apply_speed)
 
         outer.addLayout(spd_row)
+
+        # Torque row
+        torque_row = QHBoxLayout()
+        torque_row.addWidget(QLabel("Max torque (0–4095):"))
+        self.sb_torque = QSpinBox()
+        self.sb_torque.setRange(0, 4095)
+        self.sb_torque.setValue(1024)
+        torque_row.addWidget(self.sb_torque)
+
+        self.sl_torque = QSlider(Qt.Horizontal)
+        self.sl_torque.setRange(0, 4095)
+        self.sl_torque.setValue(1024)
+        self.sl_torque.valueChanged.connect(self.sb_torque.setValue)
+        self.sb_torque.valueChanged.connect(self.sl_torque.setValue)
+        torque_row.addWidget(self.sl_torque, stretch=1)
+
+        self.btn_torque_apply = QPushButton("Apply")
+        self.btn_torque_apply.clicked.connect(self._on_torque_apply_clicked)
+        torque_row.addWidget(self.btn_torque_apply)
+
+        outer.addLayout(torque_row)
 
         # Quick preset buttons
         preset_row = QHBoxLayout()
@@ -429,6 +531,12 @@ class MainWindow(QMainWindow):
         if ver is not None:
             self.setWindowTitle(f"{self.BASE_TITLE} — fw 0x{ver:04X}")
             self._log(f"  firmware version: 0x{ver:04X}")
+        try:
+            torque = self.sb_torque.value()
+            servo.set_torque_max(torque)
+            self._log(f"  torque max set to {torque} ({torque/4095*100:.0f}%)")
+        except Exception as e:
+            self._log(f"  torque init failed: {e}")
         self._read_once()
 
     def _on_disconnect_clicked(self):
@@ -459,7 +567,7 @@ class MainWindow(QMainWindow):
             self.btn_pos_read, self.btn_speed_read,
             self.btn_open, self.btn_close,
             self.btn_limits_read, self.btn_limits_apply,
-            self.btn_save_nvm,
+            self.btn_save_nvm, self.btn_torque_apply,
         ):
             w.setEnabled(connected)
         if not connected:
@@ -475,18 +583,18 @@ class MainWindow(QMainWindow):
             return None
         return self._servo
 
-    def _move_to(self, angle_deg: float, speed: Optional[int] = None):
+    def _move_to(self, angle_deg: float, speed: Optional[int] = None,
+                 torque_move: int = 2048, speed_restore: Optional[int] = None):
         s = self._require_servo()
         if not s:
             return
-        try:
-            if speed is not None:
-                s.set_speed(speed)
-                self._log(f"set_speed({speed})")
-            s.set_position(angle_deg)
-            self._log(f"set_position({angle_deg:.2f}°)")
-        except Exception as e:
-            self._log(f"move failed: {e}")
+        if self._mover and self._mover.isRunning():
+            self._mover.quit()
+            self._mover.wait(500)
+        self._mover = MoveWorker(s, angle_deg, speed, torque_move=torque_move,
+                                 speed_restore=speed_restore)
+        self._mover.log_msg.connect(self._log)
+        self._mover.start()
 
     def _on_move_clicked(self):
         self._move_to(self.ds_angle.value())
@@ -514,6 +622,17 @@ class MainWindow(QMainWindow):
             self._log(f"set_speed({self.sb_speed.value()})")
         except Exception as e:
             self._log(f"set_speed failed: {e}")
+
+    def _on_torque_apply_clicked(self):
+        s = self._require_servo()
+        if not s:
+            return
+        try:
+            t = self.sb_torque.value()
+            s.set_torque_max(t)
+            self._log(f"set_torque_max({t})  ({t/4095*100:.0f}%)")
+        except Exception as e:
+            self._log(f"set_torque_max failed: {e}")
 
     def _on_speed_read_clicked(self):
         s = self._require_servo()
@@ -556,11 +675,13 @@ class MainWindow(QMainWindow):
 
     def _on_open_clicked(self):
         angle = self._parse_angle(self.le_open, self._config["open_angle_deg"])
-        self._move_to(angle, speed=self.sb_cover_speed.value())
+        # Max speed → setpoint jumps directly to target → large PID error → full torque
+        self._move_to(angle, speed=4095, torque_move=4095,
+                      speed_restore=self.sb_speed.value())
 
     def _on_close_clicked(self):
         angle = self._parse_angle(self.le_close, self._config["close_angle_deg"])
-        self._move_to(angle, speed=self.sb_cover_speed.value())
+        self._move_to(angle, speed=self.sb_cover_speed.value(), torque_move=2048)  # 50%
 
     def _on_preset_edited(self):
         """Called whenever a preset value changes — auto-save to disk."""
