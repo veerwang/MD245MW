@@ -421,11 +421,13 @@ class MD245MW:
     EMG_MOTOR_HOLD = 3             #   freeze at current pos
 
     # ---- Position limits & zero point (R/W, save+reset required) ----
-    REG_POSITION_MAX_LIMIT = 0xB0  # max target position, default 10922 (238°)
-    REG_POSITION_MIN_LIMIT = 0xB2  # min target position, default 5462 (122°)
+    # Soft limits: firmware clamps set_position() targets to [MIN, MAX]. Use these.
+    REG_POSITION_MAX = 0x50        # soft upper — default 16383 (≈360°)
+    REG_POSITION_MIN = 0x52        # soft lower — default 0
+    # Hard limits: verified NOT to clamp set_position() on this firmware (mechanical/safety only).
+    REG_POSITION_MAX_LIMIT = 0xB0
+    REG_POSITION_MIN_LIMIT = 0xB2
     REG_POSITION_MID = 0xC2        # CR/Speed zero reference, default 8192 (180°)
-    REG_POS_EMG_MAX = 0x50         # position above → trigger emergency; 16383 default
-    REG_POS_EMG_MIN = 0x52         # position below → trigger emergency; 0 default
 
     # ---- Speed / torque / current limits (R/W, save+reset required) ----
     REG_VELOCITY_MAX = 0x54        # max speed, 0-4095 (posdiff/100ms, 4096=90°)
@@ -793,16 +795,17 @@ class MD245MW:
         }
 
     def set_position_limits(self, min_deg: float, max_deg: float) -> bool:
+        """Set the soft position window. Firmware clamps set_position() targets to [min, max]."""
         min_pos = max(0, min(int(min_deg * self.POSITION_PER_DEGREE), self.MAX_POSITION))
         max_pos = max(0, min(int(max_deg * self.POSITION_PER_DEGREE), self.MAX_POSITION))
-        ok1 = self._write_register(self.REG_POSITION_MIN_LIMIT, min_pos)
-        ok2 = self._write_register(self.REG_POSITION_MAX_LIMIT, max_pos)
+        ok1 = self._write_register(self.REG_POSITION_MIN, min_pos)
+        ok2 = self._write_register(self.REG_POSITION_MAX, max_pos)
         return ok1 and ok2
 
     def get_position_limits(self) -> Optional[tuple[float, float]]:
-        """Return (min_deg, max_deg) current position limits, or None on failure."""
-        lo = self._read_register(self.REG_POSITION_MIN_LIMIT)
-        hi = self._read_register(self.REG_POSITION_MAX_LIMIT)
+        """Return (min_deg, max_deg) current soft position limits, or None on failure."""
+        lo = self._read_register(self.REG_POSITION_MIN)
+        hi = self._read_register(self.REG_POSITION_MAX)
         if lo is None or hi is None:
             return None
         return (lo / self.POSITION_PER_DEGREE, hi / self.POSITION_PER_DEGREE)
