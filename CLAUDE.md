@@ -21,7 +21,6 @@
 |------|------|
 | `md245mw.py` | 底层驱动：RS485 协议 + DPC-20 传输层 + 高层 API，可作为库或 CLI 使用 |
 | `md245mw_gui.py` | PyQt5 GUI：端口选择、实时状态、位置/速度控制、后台定时刷新 |
-| `demo_cover.py` | 盖板开关演示 |
 | `tests/test_minimal_move.py` | +1° 最小移动测试（含过冲/电流保护） |
 | `docs/manuals/servo_protocol_eng_manual_v2_5.pdf` | Hitec CAN/RS485 协议文档 v2.5（本地保留，未提交） |
 | `docs/manuals/Hitec-DPC-20-*.pdf` | DPC-20 编程器使用说明（本地保留，未提交） |
@@ -64,9 +63,6 @@ python md245mw_gui.py
 python md245mw.py --port COM6 status      # 读所有状态
 python md245mw.py --port COM6 move 90     # 移动到 90°
 python md245mw.py --port COM6 speed 300   # 设置最大速度
-
-# Demo
-python demo_cover.py
 ```
 
 ## 库用法

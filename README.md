@@ -10,7 +10,6 @@ auto-detected from USB VID/PID. Ships with a PyQt5 GUI.
 |--------------------|----------------------------------------------------------|
 | `md245mw.py`       | Driver: RS485 protocol, DPC-20 transport, high-level API |
 | `md245mw_gui.py`   | PyQt5 GUI — port selector, live status, control panel    |
-| `demo_cover.py`    | Minimal cover open/close demo                            |
 
 ## Install
 
