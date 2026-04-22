@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
     def _build_status_box(self) -> QGroupBox:
         box = QGroupBox("Status")
         grid = QGridLayout(box)
-        mono = QFont("Consolas")
+        mono = QFont("Consolas", 13)
         mono.setStyleHint(QFont.Monospace)
 
         for i, (key, label, _) in enumerate(self.STATUS_FIELDS):
@@ -365,7 +365,7 @@ class MainWindow(QMainWindow):
         self.txt_log = QPlainTextEdit()
         self.txt_log.setReadOnly(True)
         self.txt_log.setMaximumBlockCount(500)
-        mono = QFont("Consolas")
+        mono = QFont("Consolas", 13)
         mono.setStyleHint(QFont.Monospace)
         self.txt_log.setFont(mono)
         self.txt_log.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -648,6 +648,9 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    font = app.font()
+    font.setPointSize(13)
+    app.setFont(font)
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
