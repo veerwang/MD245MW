@@ -689,7 +689,10 @@ class MD245MW:
         return self._write_register(self.REG_SPEED_DN, ms)
 
     def get_velocity(self) -> Optional[int]:
-        return self._read_register(self.REG_VELOCITY)
+        v = self._read_register(self.REG_VELOCITY)
+        if v is None:
+            return None
+        return v - 65536 if v > 32767 else v
 
     # ---- status readouts ----
 
