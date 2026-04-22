@@ -15,10 +15,10 @@ venv/
 .DS_Store
 *.swp
 *.stackdump
+tags
 
 # Local working notes (not meant for public repo)
-SESSION.md
-TODO.md
+notes/
 
 # Runtime-generated user config
 md245mw_config.json
