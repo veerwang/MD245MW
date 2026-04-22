@@ -106,6 +106,12 @@ class MainWindow(QMainWindow):
 
     BASE_TITLE = "MD245MW Servo Controller"
 
+    # ADC-backed fields that read 0 when the servo has no sensor hardware
+    # (MD245MW has no voltage/temperature feedback — show N/A instead of a
+    # misleading "0.00" / "0"). If a sensor-equipped model is connected later,
+    # a non-zero reading renders normally.
+    _SENSOR_FIELDS = frozenset({"voltage_v", "temperature_c"})
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(self.BASE_TITLE)
@@ -683,6 +689,8 @@ class MainWindow(QMainWindow):
             val = status.get(key)
             if val is None:
                 self._status_labels[key].setText("—")
+            elif key in self._SENSOR_FIELDS and val == 0:
+                self._status_labels[key].setText("N/A")
             else:
                 try:
                     self._status_labels[key].setText(fmt.format(val))
