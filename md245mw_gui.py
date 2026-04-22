@@ -104,9 +104,11 @@ class MainWindow(QMainWindow):
         ("firmware",      "Firmware",         "{}"),
     ]
 
+    BASE_TITLE = "MD245MW Servo Controller"
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MD245MW Servo Controller")
+        self.setWindowTitle(self.BASE_TITLE)
         self.resize(880, 780)
 
         self._servo: Optional[MD245MW] = None
@@ -277,6 +279,15 @@ class MainWindow(QMainWindow):
         self.btn_auto.toggled.connect(self._on_auto_toggled)
         misc_row.addWidget(self.btn_auto)
         misc_row.addStretch(1)
+
+        self.btn_save_nvm = QPushButton("Save to Servo NVM")
+        self.btn_save_nvm.setToolTip(
+            "Permanently write the current register values to the servo's\n"
+            "non-volatile memory. Requires a power cycle (or software reset)\n"
+            "for the new values to take effect on next boot."
+        )
+        self.btn_save_nvm.clicked.connect(self._on_save_nvm_clicked)
+        misc_row.addWidget(self.btn_save_nvm)
         outer.addLayout(misc_row)
 
         return box
@@ -404,6 +415,14 @@ class MainWindow(QMainWindow):
         self._servo = servo
         self._log(f"  connected ({servo.transport.value})")
         self._set_connected_ui(True)
+        try:
+            ver = servo.get_firmware_version()
+        except Exception as e:
+            ver = None
+            self._log(f"  firmware read failed: {e}")
+        if ver is not None:
+            self.setWindowTitle(f"{self.BASE_TITLE} — fw 0x{ver:04X}")
+            self._log(f"  firmware version: 0x{ver:04X}")
         self._read_once()
 
     def _on_disconnect_clicked(self):
@@ -416,6 +435,7 @@ class MainWindow(QMainWindow):
             self._servo = None
             self._log("Disconnected")
         self._set_connected_ui(False)
+        self.setWindowTitle(self.BASE_TITLE)
         for lbl in self._status_labels.values():
             lbl.setText("—")
 
@@ -433,6 +453,7 @@ class MainWindow(QMainWindow):
             self.btn_pos_read, self.btn_speed_read,
             self.btn_open, self.btn_close,
             self.btn_limits_read, self.btn_limits_apply,
+            self.btn_save_nvm,
         ):
             w.setEnabled(connected)
         if not connected:
@@ -589,6 +610,46 @@ class MainWindow(QMainWindow):
             self._log(f"set_position_limits({lo:.2f}°, {hi:.2f}°)")
         except Exception as e:
             self._log(f"set_limits failed: {e}")
+
+    # ---- NVM persistence ----
+
+    def _on_save_nvm_clicked(self):
+        s = self._require_servo()
+        if not s:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Save to servo NVM",
+            "This will write the current register values (position limits, speed, "
+            "run mode, etc.) to the servo's non-volatile memory.\n\n"
+            "Changes only take effect after a POWER CYCLE of the servo.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            ok = s.save_config()
+        except Exception as e:
+            self._log(f"save_config failed: {e}")
+            QMessageBox.critical(self, "Save to servo NVM", f"Failed: {e}")
+            return
+        if ok:
+            self._log("save_config() OK — power-cycle the servo to apply.")
+            QMessageBox.information(
+                self,
+                "Saved to NVM",
+                "Configuration written to servo NVM.\n\n"
+                "Please POWER CYCLE the servo now for the new values to take "
+                "effect on next boot.",
+            )
+        else:
+            self._log("save_config() returned False")
+            QMessageBox.warning(
+                self, "Save to servo NVM",
+                "Servo did not acknowledge the save command.",
+            )
 
     # ---- auto polling ----
 
