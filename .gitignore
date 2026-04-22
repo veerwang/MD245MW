@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.claude/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.stackdump
+
+# Local working notes (not meant for public repo)
+SESSION.md
+TODO.md
+
+# Runtime-generated user config
+md245mw_config.json
+
+# Third-party manuals (copyright — kept locally only)
+*.pdf
