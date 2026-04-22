@@ -378,7 +378,10 @@ class MD245MW:
 
     # ---- Status (read-only) ----
     REG_POSITION = 0x0C            # current position, 0-16383 = 0-360°
-    REG_VELOCITY = 0x0E            # posdiff/100ms, signed
+    REG_VELOCITY = 0x0E            # signed real-time velocity. Empirical on
+                                   # this MD245MW unit: 1 count ≈ 7.5 °/s (NOT
+                                   # the documented "posdiff/100ms"). Sign
+                                   # indicates direction; idle jitter ±1-2.
     REG_TORQUE = 0x10              # current PWM duty, 0-4095 = 0-100%
     REG_VOLTAGE = 0x12             # supply voltage, 100 = 1.00 V
     REG_MCU_TEMPER = 0x14          # MCU temp (°C)
@@ -398,9 +401,18 @@ class MD245MW:
     REG_VERSION_INVERSE = 0xFE     # firmware version (bitwise inverse, for integrity check)
 
     # ---- Targets (R/W) ----
-    REG_POSITION_NEW = 0x1E        # ABSOLUTE target position, 0-16383 = 0-360°
+    REG_POSITION_NEW = 0x1E        # target position. WARNING: on this MD245MW unit
+                                   # this register uses a DIFFERENT coordinate
+                                   # system from REG_POSITION (0x0C). Writing raw
+                                   # X does NOT take the servo to read-position X.
+                                   # The WRITE_CAL_SLOPE/OFFSET below exist to
+                                   # bridge the two coordinate systems. Always
+                                   # use set_position(physical_deg) — never
+                                   # write raw values directly.
     REG_TURN_NEW = 0x24            # target turn count (MULTI-TURN mode only)
-    REG_VELOCITY_TARGET = 0x60     # target velocity (SPEED mode; FW>=2.3(3))
+    REG_VELOCITY_TARGET = 0x60     # target velocity (SPEED mode only; FW>=2.3).
+                                   # Empirically NO EFFECT on this MD245MW unit in
+                                   # SERVO mode — use REG_VELOCITY_MAX (0x54).
 
     # ---- Mode & comms config (R/W, save+reset required) ----
     REG_ID = 0x32                  # servo ID (1-254; 0 = broadcast)
@@ -430,8 +442,17 @@ class MD245MW:
     REG_POSITION_MID = 0xC2        # CR/Speed zero reference, default 8192 (180°)
 
     # ---- Speed / torque / current limits (R/W, save+reset required) ----
-    REG_VELOCITY_MAX = 0x54        # max speed, 0-4095 (posdiff/100ms, 4096=90°)
-    REG_TORQUE_MAX = 0x56          # PWM duty cap, 0-4095 = 0-100% (NOT current)
+    # REG_VELOCITY_MAX unit on this MD245MW unit is empirically "posdiff per
+    # 500 μs" (2 kHz PID cycle), NOT v2.5 manual's "posdiff / 100 ms".
+    # Empirical mapping: 1 count ≈ 44 °/s. Minimum writable value 1 → 44 °/s
+    # (the hardware floor via this register — cannot go slower through 0x54
+    # alone because the register is integer). Saturates at ~260 °/s around
+    # count=9. Calibration performed on 5V-2A bench supply.
+    REG_VELOCITY_MAX = 0x54        # max speed (empirical: 44 °/s per count)
+    REG_TORQUE_MAX = 0x56          # PWM duty cap, 0-4095 = 0-100% (NOT current).
+                                   # Confirmed: setting 1 stops motion entirely,
+                                   # 100 throttles speed to ~33 °/s. Acts as a
+                                   # drive-power ceiling.
     REG_CURRENT_MAX = 0xD8         # current limit in mA (current-sensor models)
 
     # ---- Voltage protection (R/W) ----
@@ -622,12 +643,18 @@ class MD245MW:
 
     # ---- position ----
 
-    # Empirical write calibration (established from user-measured data points):
-    #   physical_deg = WRITE_CAL_SLOPE * commanded_deg + WRITE_CAL_OFFSET
+    # Write calibration: bridges the MD245MW firmware's internal coordinate
+    # system (REG_POSITION_NEW 0x1E) with the encoder-reported coordinate
+    # (REG_POSITION 0x0C). The two are NOT the same on this FW — 0x1E's
+    # 16383-unit range spans ~3.15 full revolutions in encoder units, so a
+    # linear bridge is needed.
+    #   physical_deg (what 0x0C reports) = WRITE_CAL_SLOPE * cmd_deg + OFFSET
     # Derived from observed (cmd, pos) pairs: (50,130), (60,161.35),
     # (70,192.81), (80,224.38) → slope ≈ 3.15, offset ≈ -27.5.
-    # The inverse (what this code applies) is:
-    #   commanded_deg = (target_physical_deg - WRITE_CAL_OFFSET) / WRITE_CAL_SLOPE
+    # The inverse (what set_position applies) is:
+    #   cmd_deg = (target_physical_deg - OFFSET) / SLOPE
+    # Do NOT use set_position_raw() with "raw values equal encoder reading"
+    # — they are different coordinate systems.
     WRITE_CAL_SLOPE = 3.15
     WRITE_CAL_OFFSET = -27.5
 
@@ -654,7 +681,15 @@ class MD245MW:
         return self._write_register(self.REG_POSITION_NEW, raw)
 
     def set_position_raw(self, position: int) -> bool:
-        """Write raw value directly to REG_POSITION_NEW, bypassing calibration."""
+        """Write a raw value directly to REG_POSITION_NEW (0x1E).
+
+        WARNING: 0x1E uses a different coordinate system from the encoder
+        readback (0x0C). Writing raw N does NOT mean the servo will move to
+        the position that reads back as raw N. Example: writing 5500 sent
+        the servo to ~260° (encoder) on FW 2.36. Use set_position(deg) for
+        normal use; only reach for this when you know exactly what you're
+        doing in 0x1E coordinates.
+        """
         position = max(0, min(position, self.MAX_POSITION))
         return self._write_register(self.REG_POSITION_NEW, position)
 
