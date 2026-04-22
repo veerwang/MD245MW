@@ -310,14 +310,14 @@ class MainWindow(QMainWindow):
 
         # Speed row
         spd_row = QHBoxLayout()
-        spd_row.addWidget(QLabel("Max speed (0–4095):"))
+        spd_row.addWidget(QLabel("Max speed (1–4):"))
         self.sb_speed = QSpinBox()
-        self.sb_speed.setRange(0, 4095)
+        self.sb_speed.setRange(1, 4)
         self.sb_speed.setValue(1)
         spd_row.addWidget(self.sb_speed)
 
         self.sl_speed = QSlider(Qt.Horizontal)
-        self.sl_speed.setRange(0, 4095)
+        self.sl_speed.setRange(1, 4)
         self.sl_speed.setValue(1)
         self.sl_speed.valueChanged.connect(self.sb_speed.setValue)
         self.sb_speed.valueChanged.connect(self.sl_speed.setValue)
@@ -427,10 +427,11 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.btn_close, 1, 2)
 
         # Cover-specific speed (uses current max-speed by default, but can override)
-        grid.addWidget(QLabel("Preset speed:"), 2, 0)
+        grid.addWidget(QLabel("Preset speed (1–4):"), 2, 0)
         self.sb_cover_speed = QSpinBox()
-        self.sb_cover_speed.setRange(0, 4095)
-        self.sb_cover_speed.setValue(int(self._config["cover_speed"]))
+        self.sb_cover_speed.setRange(1, 4)
+        cover_speed_init = max(1, min(int(self._config["cover_speed"]), 4))
+        self.sb_cover_speed.setValue(cover_speed_init)
         self.sb_cover_speed.valueChanged.connect(self._on_preset_edited)
         grid.addWidget(self.sb_cover_speed, 2, 1)
 
